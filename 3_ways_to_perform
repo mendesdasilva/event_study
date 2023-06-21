@@ -1,0 +1,622 @@
+####################################################################
+################CODE FOR EVENT STUDY################################
+#####Based on Closing Prices for a list of Companies################
+####################################################################
+
+
+
+
+#install.packages("tseries")
+#install.packages("zoo")
+#install.packages("fGarch")
+#install.packages("tcltk")
+
+require(tseries)
+require(zoo)
+require(tcltk)
+
+est1 <- -120
+est2 <- -11
+ev1 <- -10
+ev2 <- 10
+idinde <- "IBOV"
+
+ncolcot <- 285
+ncoleve <- 9
+
+setwd(tclvalue(tkchooseDirectory()))
+
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+
+
+cotc <- read.table("cotc.csv", head=T, sep=",", as.is=c(1:ncolcot))     ## Consist�ncia adequada
+eventc <- read.table("eventc1.csv", head=T, sep=",", as.is=c(1:ncoleve))  ## Consist�ncia adequada
+
+### Ajuste de cotc ###
+cotc <- zoo(cotc)
+cotc[,1] <- as.character(cotc[,1])
+tempDates <- as.Date(as.character(cotc[,1]), format="%d/%m/%Y")
+time(cotc) <- tempDates
+cotc <- cotc[,-1]
+
+
+
+
+### Transforma cota��es em retornos, 4 testes.
+### Tempo por unidade, 40 segundos.
+### Tempo total estimado (i7, 8GB RAM) -> 34,5 horas.
+
+getReturns <- function() {
+  
+  cotc1 <<- cotc
+  cotcbase <<- cotc
+  
+  for(i in 2:nrow(cotc)) {
+    for(j in 1:ncol(cotc)) {
+      
+      cat("[",i,",",j,"] - Aguarde...\n", sep="")
+      
+      teste <- cotcbase[i,j] == "-" || as.numeric(cotcbase[i,j]) < 10E-10 || 
+        cotcbase[i-1,j] == "-" || as.numeric(cotcbase[i-1,j]) < 10E-10
+      
+      if(teste) {
+        cotc1[i,j] <- "-"
+      } else {
+        cotc1[i,j] <- log(as.numeric(cotcbase[i,j])/as.numeric(cotcbase[i-1,j]))
+      }
+      
+      
+    }
+  }
+  
+  return(cotc1)
+}
+
+## Resultado da fun��o getReturns
+cotc2 <- read.table("cotc2.txt", sep="\t", dec=",", as.is=c(1:ncolcot))
+cotc2 <- as.zoo(cotc2)
+
+time(cotc2) <- time(cotc)
+cotc2 <- cotc2[-1,]
+
+
+### Nome do �ndice: IBOV ###
+
+DSN <- function(Dcotc, Deventc, inde, eststart, estend, eventstart, eventend) {
+  
+  fMatrix <- matrix(0, nrow = nrow(Deventc), ncol = 6)
+  as.data.frame(fMatrix) -> fMatrix
+  colnames(fMatrix) <- c("est.totaldays","est.negdays","MinDias","MaxDias",
+                         "event.totaldays","event.negdays")
+  
+  which(Dcotc[,inde] == "-") -> delInde
+  if(length(delInde) > 0) {
+    Dcotc1 <- Dcotc[((1:nrow(Dcotc))[-delInde]),]
+  } else {
+    Dcotc1 <- Dcotc
+  }
+  
+  which(abs(as.numeric(Dcotc1[,inde])) <= 10E-15) -> del1Inde
+  if(length(del1Inde) > 0) {
+    Dcotc2 <- Dcotc1[((1:nrow(Dcotc1))[-del1Inde]),]
+  } else {
+    Dcotc2 <- Dcotc1
+  }
+  
+  for(i in 1:nrow(Deventc)) {
+    print(i)
+    auxEvDat <- as.Date(Deventc[i,1], format="%d/%m/%Y")
+    
+    auxEvTicker <- Deventc[i,2]
+    DcotcTicker <- Dcotc2[,auxEvTicker]
+    DcotcIndice <- Dcotc2[,inde]
+    
+    max(which(time(DcotcIndice) < auxEvDat)) -> beforeIndex
+    min(which(time(DcotcIndice) > auxEvDat)) -> afterIndex
+    
+    beforeIndex + eststart -> eststartIndex
+    beforeIndex + estend + 2 -> estendIndex
+    
+    ### 3 casos, 2-, -+, 2+
+    
+    if(eventstart < 0 & eventend < 0) {
+      beforeIndex + eventstart + 1 -> eventstartIndex
+      beforeIndex + eventend + 1 -> eventendIndex
+    } else if(eventstart < 0 & eventend > 0) {
+      beforeIndex + eventstart + 1 -> eventstartIndex
+      afterIndex + eventend - 1 -> eventendIndex
+    } else if(eventstart > 0 & eventend > 0) {
+      afterIndex + eventstart - 1 -> eventstartIndex
+      afterIndex + eventend - 1 -> eventendIndex
+    }
+    
+    ## �ndice dos valores usados na estima��o, dentro de Dcotc2
+    estInterval <- eststartIndex:estendIndex
+    
+    eventInterval <- eventstartIndex:eventendIndex
+    DcotcTicker[estInterval] -> est.DcotcTicker
+    DcotcIndice[estInterval] -> est.DcotcIndice
+    
+    DcotcTicker[eventInterval] -> event.DcotcTicker
+    DcotcIndice[eventInterval] -> event.DcotcIndice
+    
+    est.DcotcTicker[est.DcotcTicker != "-"] -> cond1
+    cond1[abs(as.numeric(cond1)) >= 10E-10] -> DtickerAdj1
+    
+    fMatrix[i,1] <- length(est.DcotcIndice)
+    
+    fMatrix[i,2] <- length(DtickerAdj1)
+    
+    
+    if(fMatrix[i,2] > 5) {
+      
+      for(k in 2:length(DtickerAdj1)) {
+        
+        if(k == 2) {
+          fMatrix[i,3] <- (time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]]
+          fMatrix[i,4] <- (time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]]
+        }
+        
+        if((time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]] < fMatrix[i,3]) {
+          fMatrix[i,3] <- (time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]]
+        }
+        
+        if((time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]] > fMatrix[i,4]) {
+          fMatrix[i,4] <- (time(DtickerAdj1)[k] - time(DtickerAdj1)[k-1])[[1]]
+        }
+        
+      } ## End if - teste de entrada
+    } ## End for2
+    
+    cond3 <- event.DcotcTicker[event.DcotcTicker != "-"]
+    event.TickerAdj1 <- cond3[abs(as.numeric(cond3)) >= 10E-10]
+    
+    fMatrix[i,5] <- length(event.DcotcIndice)
+    fMatrix[i,6] <- length(event.TickerAdj1)
+    
+  } ## End for1
+  
+  return(fMatrix)
+}
+
+res1 <- DSN(cotc2, eventc, idinde, est1, est2, ev1, ev2)
+res2 <- cbind(eventc, res1)
+
+
+getEvents <- function(resbuffer) {
+  
+  which(colnames(resbuffer) == "est.negdays") -> negestcol
+  which(colnames(resbuffer) == "est.totaldays") -> totestcol
+  
+  which(colnames(resbuffer) == "event.negdays") -> negeventcol
+  which(colnames(resbuffer) == "event.totaldays") -> toteventcol
+  
+  totaldel <- vector()
+  
+  for(i in 1:nrow(resbuffer)) {
+    
+    if(resbuffer[i, negestcol] != resbuffer[i, totestcol]) {
+      totaldel <- c(totaldel, i)
+    }
+    
+    if(resbuffer[i, negeventcol] != resbuffer[i, toteventcol]) {
+      totaldel <- c(totaldel, i)
+    }
+    
+  }
+  unique(totaldel[order(totaldel)]) -> totaldel
+  
+  if(length(totaldel) > 0) {
+    resbuffer <- resbuffer[-totaldel,]
+  }
+  
+  return(resbuffer)
+  
+}
+
+#################################################################################
+#################################################################################
+#################################################################################
+
+res3 <- getEvents(res2)
+
+cotc2 -> cotfinal
+res3 -> eventfinal
+
+### Arquivo de cota��es: cotfinal
+### Arquivo de eventos: eventfinal
+
+
+#################################################################
+##         Fun��o - modelo 1 - Modelo de Mercado (MM)          ##  
+#################################################################
+
+
+## Fun��o - modelo 1 - Modelo de Mercado (MM)
+
+marketModel <- function(estret, estindice, eventindice) {
+  
+  model <- lm(estret ~ estindice)
+  
+  forecastvector <- vector()
+  for(i in 1:length(eventindice)) {
+    acreturn <- model$coef[[1]] + model$coef[[2]]*eventindice[i]
+    forecastvector <- c(forecastvector, acreturn)
+    
+  }
+  return(forecastvector)
+}
+
+#################################################################
+##       Fun��o - modelo 2 - Scholes & Williams (SWMM)         ##  
+#################################################################
+
+SWMM <- function(estret, estindice, eventindice) {
+  
+  esttime <- length(estret) - 2
+  
+  retticker <- estret[2:(length(estret)-1)]
+  
+  retindice_lagminus <- estindice[1:(length(estindice)-2)]
+  retindice_unlagged <- estindice[2:(length(estindice)-1)]
+  retindice_lagplus <- estindice[3:length(estindice)]
+  
+  ## C�lculo de b-
+  covbminus <- cov(retticker,retindice_lagminus)
+  varbminus <- var(retindice_lagminus)
+  
+  bminus <- covbminus/varbminus
+  
+  ## C�lculo de b+
+  covbplus <- cov(retticker,retindice_lagplus)
+  varbplus <- var(retindice_lagplus)
+  
+  bplus <- covbplus/varbplus
+  
+  
+  ## C�lculo de b
+  covb <- cov(retticker, retindice_unlagged)
+  varb <- var(retindice_unlagged)
+  
+  bnormal <- covb/varb
+  
+  ## C�lculo de rho
+  covmarket <- cov(retindice_unlagged, retindice_lagminus)
+  stdmarket_unlagged <- sd(retindice_unlagged)
+  stdmarket_lagminus <- sd(retindice_lagminus)
+  
+  rhomarket <- covmarket/(stdmarket_unlagged*stdmarket_lagminus)
+  
+  ## C�lculo de B
+  b.est <- (bminus + bnormal + bplus)/(1 + 2*rhomarket)
+  
+  ## C�lculo de A
+  a.est <- (1/(esttime))*sum(retticker) - b.est*(1/(esttime))*sum(retindice_unlagged)
+  
+  
+  forecastvector <- vector()
+  
+  for(i in 1:length(eventindice)) {
+    
+    acreturn <- a.est + b.est*eventindice[i]
+    forecastvector <- c(forecastvector, acreturn)
+    
+    
+  }
+  
+  return(forecastvector)
+  
+}
+
+
+###############################################################################
+##  Fun��o - modelo 3 - MM ajustado para heterocedasticidade por Garch(1,1)  ##
+###############################################################################
+
+MMGarch <- function(estret, estindice, eventindice) {
+  
+  require(fGarch)
+  
+  meanmodel <- lm(estret ~ estindice)
+  
+  residvar <- meanmodel$resid
+  
+  residmodel <- garchFit( ~ garch(1, 1), data = residvar, trace = F)
+  
+  totalmodel <- lm(estret ~ estindice, weights = (1/((residmodel@sigma.t)^2)))
+  
+  forecastvector <- vector()
+  
+  for(i in 1:length(eventindice)) {
+    
+    acreturn <- totalmodel$coef[[1]] + totalmodel$coef[[2]]*eventindice[i]
+    forecastvector <- c(forecastvector, acreturn)
+    
+  }
+  
+  detach(package:fGarch)
+  detach(package:fBasics)
+  detach(package:timeSeries)
+  detach(package:timeDate)
+  
+  return(forecastvector)
+}
+
+
+
+############################################################################
+########################## END - MODELS FUNCTIONS ##########################
+############################################################################
+
+
+
+############################################################################
+######################### Final Function - getAR ###########################
+############################################################################
+
+### Arquivo de cota��es: cotfinal
+### Arquivo de eventos: eventfinal
+
+
+getAR <- function(Fcotc, Feventc, inde, eststart, estend, eventstart, eventend) {
+  
+  
+  max(Feventc[,"event.negdays"]) -> maxeventdays
+  
+  dates <- maxeventdays
+  normalreturns <- maxeventdays
+  MM.est.returns <- maxeventdays
+  SWMM.est.returns <- maxeventdays
+  MMGarch.est.returns <- maxeventdays
+  MM.abreturns <- maxeventdays
+  SWMM.abreturns <- maxeventdays
+  MMGarch.abreturns <- maxeventdays
+  MM.c.abreturns <- maxeventdays
+  SWMM.c.abreturns <- maxeventdays
+  MMGarch.c.abreturns <- maxeventdays
+  
+  
+  neccol <- dates + normalreturns + MM.est.returns + SWMM.est.returns + MMGarch.est.returns +
+    MM.abreturns + SWMM.abreturns + MMGarch.abreturns + MM.c.abreturns + SWMM.c.abreturns + MMGarch.c.abreturns + 3
+  
+  finalMatrix <- matrix(0, nrow = nrow(Feventc), ncol = neccol)
+  finalMatrix <- as.data.frame(finalMatrix)
+  
+  ncol(Feventc) -> basecol
+  
+  Feventc <- cbind(Feventc, finalMatrix)
+  
+  colnames(Feventc)[(basecol+1):(basecol+maxeventdays)] <- paste("Dates",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays):(basecol+maxeventdays*2)] <- paste("norm.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*2):(basecol+maxeventdays*3)] <- paste("MM.est.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*3):(basecol+maxeventdays*4)] <- paste("SWMM.est.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*4):(basecol+maxeventdays*5)] <- paste("MMGarch.est.ret",1:maxeventdays, sep="")
+  
+  colnames(Feventc)[(basecol+1+maxeventdays*5):(basecol+maxeventdays*6)] <- paste("MM.ab.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*6):(basecol+maxeventdays*7)] <- paste("SWMM.ab.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*7):(basecol+maxeventdays*8)] <- paste("MMGarch.ab.ret",1:maxeventdays, sep="")
+  
+  colnames(Feventc)[(basecol+1+maxeventdays*8):(basecol+maxeventdays*9)] <- paste("MM.cab.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*9):(basecol+maxeventdays*10)] <- paste("SWMM.cab.ret",1:maxeventdays, sep="")
+  colnames(Feventc)[(basecol+1+maxeventdays*10):(basecol+maxeventdays*11)] <- paste("MMGarch.cab.ret",1:maxeventdays, sep="")
+  
+  colnames(Feventc)[(basecol+1+maxeventdays*11)] <- "consolidated.MM.cab.ret"
+  colnames(Feventc)[(basecol+1+maxeventdays*11 + 1)] <- "consolidated.SWMM.cab.ret"
+  colnames(Feventc)[(basecol+1+maxeventdays*11 + 2)] <- "consolidated.MMGarch.cab.ret"
+  
+  
+  
+  which(Fcotc[,inde] == "-") -> delInde
+  if(length(delInde) > 0) {
+    Fcotc1 <- Fcotc[((1:nrow(Fcotc))[-delInde]),]
+  } else {
+    Fcotc1 <- Fcotc
+  }
+  
+  which(abs(as.numeric(Fcotc1[,inde])) <= 10E-15) -> del1Inde
+  if(length(del1Inde) > 0) {
+    Fcotc2 <- Fcotc1[((1:nrow(Fcotc1))[-del1Inde]),]
+  } else {
+    Fcotc2 <- Fcotc1
+  }
+  
+  for(i in 1:nrow(Feventc)) {
+    print(i)
+    auxEvDat <- as.Date(Feventc[i,1], format="%d/%m/%Y")
+    
+    auxEvTicker <- Feventc[i,2]
+    FcotcTicker <- Fcotc2[,auxEvTicker]
+    FcotcIndice <- Fcotc2[,inde]
+    
+    max(which(time(FcotcIndice) < auxEvDat)) -> beforeIndex
+    min(which(time(FcotcIndice) > auxEvDat)) -> afterIndex
+    
+    beforeIndex + eststart -> eststartIndex
+    beforeIndex + estend + 2 -> estendIndex
+    
+    ### 3 casos, 2-, -+, 2+
+    
+    if(eventstart < 0 & eventend < 0) {
+      beforeIndex + eventstart + 1 -> eventstartIndex
+      beforeIndex + eventend + 1 -> eventendIndex
+    } else if(eventstart < 0 & eventend > 0) {
+      beforeIndex + eventstart + 1 -> eventstartIndex
+      afterIndex + eventend - 1 -> eventendIndex
+    } else if(eventstart > 0 & eventend > 0) {
+      afterIndex + eventstart - 1 -> eventstartIndex
+      afterIndex + eventend - 1 -> eventendIndex
+    }
+    
+    ## �ndice dos valores usados na estima��o, dentro de Dcotc2
+    estInterval <- eststartIndex:estendIndex
+    
+    eventInterval <- eventstartIndex:eventendIndex
+    
+    FcotcTicker[estInterval] -> est.DcotcTicker
+    FcotcIndice[estInterval] -> est.DcotcIndice
+    
+    FcotcTicker[eventInterval] -> event.DcotcTicker
+    FcotcIndice[eventInterval] -> event.DcotcIndice
+    
+    event.DcotcTicker2 <- as.numeric(as.vector(event.DcotcTicker))
+    event.DcotcIndice2 <- as.numeric(as.vector(event.DcotcIndice))
+    
+    MM.est.DcotcTicker <- as.numeric(as.vector(est.DcotcTicker))[2:(length(est.DcotcTicker)-1)]
+    SWMM.est.DcotcTicker <- as.numeric(as.vector(est.DcotcTicker))
+    MMGarch.est.DcotcTicker <- as.numeric(as.vector(est.DcotcTicker))[2:(length(est.DcotcTicker)-1)]
+    
+    MM.est.DcotcIndice <- as.numeric(as.vector(est.DcotcIndice))[2:(length(est.DcotcIndice)-1)]
+    SWMM.est.DcotcIndice <- as.numeric(as.vector(est.DcotcIndice))
+    MMGarch.est.DcotcIndice <- as.numeric(as.vector(est.DcotcIndice))[2:(length(est.DcotcIndice)-1)]
+    
+    ### Datas, para compara��o
+    which(colnames(Feventc) == "Dates1") -> auxnum1
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum1:(auxnum1+maxeventdays-1)] <- as.character(format(time(event.DcotcTicker),format="%d/%m/%Y"))
+    } else {
+      Feventc[i,auxnum1:(auxnum1+maxeventdays-1)] <- c(as.character(format(time(event.DcotcTicker),format="%d/%m/%Y"))
+                                                       , rep("-", maxeventdays - length(event.DcotcTicker)))
+    }
+    
+    ### retornos reais da a��o relacionada ao evento
+    which(colnames(Feventc) == "norm.ret1") -> auxnum2
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum2:(auxnum2+maxeventdays-1)] <- event.DcotcTicker2
+    } else {
+      
+      Feventc[i,auxnum2:(auxnum2+length(event.DcotcTicker)-1)] <- event.DcotcTicker2
+      Feventc[i,(auxnum2 + length(event.DcotcTicker)):(auxnum2+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos calculados pelo Market Model
+    which(colnames(Feventc) == "MM.est.ret1") -> auxnum3
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum3:(auxnum3+maxeventdays-1)] <- marketModel(MM.est.DcotcTicker, MM.est.DcotcIndice, event.DcotcIndice2)
+    } else {
+      
+      Feventc[i,auxnum3:(auxnum3+length(event.DcotcTicker)-1)] <- marketModel(MM.est.DcotcTicker, MM.est.DcotcIndice, event.DcotcIndice2)
+      Feventc[i,(auxnum3 + length(event.DcotcTicker)):(auxnum3+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos calculados pelo Scholes & Williams - 1977 - MM
+    which(colnames(Feventc) == "SWMM.est.ret1") -> auxnum4
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum4:(auxnum4+maxeventdays-1)] <- SWMM(SWMM.est.DcotcTicker, SWMM.est.DcotcIndice, event.DcotcIndice2)
+    } else {
+      
+      Feventc[i,auxnum4:(auxnum4+length(event.DcotcTicker)-1)] <- SWMM(SWMM.est.DcotcTicker, SWMM.est.DcotcIndice, event.DcotcIndice2)
+      Feventc[i,(auxnum4 + length(event.DcotcTicker)):(auxnum4+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos calculados por MM ajustado para Garch
+    which(colnames(Feventc) == "MMGarch.est.ret1") -> auxnum5
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum5:(auxnum5+maxeventdays-1)] <- MMGarch(MMGarch.est.DcotcTicker, MMGarch.est.DcotcIndice, event.DcotcIndice2)
+    } else {
+      
+      Feventc[i,auxnum5:(auxnum5+length(event.DcotcTicker)-1)] <- MMGarch(MMGarch.est.DcotcTicker, MMGarch.est.DcotcIndice, event.DcotcIndice2)
+      Feventc[i,(auxnum5 + length(event.DcotcTicker)):(auxnum5+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos anormais - Market Model
+    which(colnames(Feventc) == "MM.ab.ret1") -> auxnum6
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum6:(auxnum6+maxeventdays-1)] <- 
+        as.numeric(Feventc[i,auxnum2:(auxnum2+maxeventdays-1)]) - as.numeric(Feventc[i,auxnum3:(auxnum3+maxeventdays-1)])
+    } else {
+      
+      Feventc[i,auxnum6:(auxnum6+length(event.DcotcTicker)-1)] <- as.numeric(Feventc[i,auxnum2:(auxnum2+length(event.DcotcTicker)-1)]) - as.numeric(Feventc[i,auxnum3:(auxnum3+length(event.DcotcTicker)-1)])
+      Feventc[i,(auxnum6 + length(event.DcotcTicker)):(auxnum6+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos anormais - SWMM
+    which(colnames(Feventc) == "SWMM.ab.ret1") -> auxnum7
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum7:(auxnum7+maxeventdays-1)] <- 
+        as.numeric(Feventc[i,auxnum2:(auxnum2+maxeventdays-1)]) - as.numeric(Feventc[i,auxnum4:(auxnum4+maxeventdays-1)])
+    } else {
+      
+      Feventc[i,auxnum7:(auxnum7+length(event.DcotcTicker)-1)] <- as.numeric(Feventc[i,auxnum2:(auxnum2+length(event.DcotcTicker)-1)]) - as.numeric(Feventc[i,auxnum4:(auxnum4+length(event.DcotcTicker)-1)])
+      Feventc[i,(auxnum7 + length(event.DcotcTicker)):(auxnum7+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### Retornos anormais - Modelo de Mercado + Garch (het.)
+    which(colnames(Feventc) == "MMGarch.ab.ret1") -> auxnum8
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum8:(auxnum8+maxeventdays-1)] <- 
+        as.numeric(Feventc[i,auxnum2:(auxnum2+maxeventdays-1)]) - as.numeric(Feventc[i,auxnum5:(auxnum5+maxeventdays-1)])
+    } else {
+      
+      Feventc[i,auxnum8:(auxnum8+length(event.DcotcTicker)-1)] <- as.numeric(Feventc[i,auxnum2:(auxnum2+length(event.DcotcTicker)-1)]) - as.numeric(Feventc[i,auxnum5:(auxnum5+length(event.DcotcTicker)-1)])
+      Feventc[i,(auxnum8 + length(event.DcotcTicker)):(auxnum8+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+    }
+    
+    ### C       Retornos anormais acumulados - Market Model
+    which(colnames(Feventc) == "MM.cab.ret1") -> auxnum9
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum9:(auxnum9+maxeventdays-1)] <- 
+        cumsum(as.numeric(Feventc[i,auxnum6:(auxnum6+maxeventdays-1)]))
+      
+      Feventc[i, "consolidated.MM.cab.ret"] <- Feventc[i,(auxnum9+maxeventdays-1)]
+      
+    } else {
+      
+      Feventc[i,auxnum9:(auxnum9+length(event.DcotcTicker)-1)] <- cumsum(as.numeric(Feventc[i,auxnum6:(auxnum6+length(event.DcotcTicker)-1)]))
+      Feventc[i,(auxnum9 + length(event.DcotcTicker)):(auxnum9+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+      Feventc[i, "consolidated.MM.cab.ret"] <- Feventc[i,(auxnum9+length(event.DcotcTicker)-1)]
+      
+    }
+    
+    ### C       Retornos anormais acumulados - SWMM
+    which(colnames(Feventc) == "SWMM.cab.ret1") -> auxnum10
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum10:(auxnum10+maxeventdays-1)] <- 
+        cumsum(as.numeric(Feventc[i,auxnum7:(auxnum7+maxeventdays-1)]))
+      
+      Feventc[i, "consolidated.SWMM.cab.ret"] <- Feventc[i,(auxnum10+maxeventdays-1)]
+    } else {
+      
+      Feventc[i,auxnum10:(auxnum10+length(event.DcotcTicker)-1)] <- cumsum(as.numeric(Feventc[i,auxnum7:(auxnum7+length(event.DcotcTicker)-1)]))
+      Feventc[i,(auxnum10 + length(event.DcotcTicker)):(auxnum10+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+      Feventc[i, "consolidated.SWMM.cab.ret"] <- Feventc[i,(auxnum10+length(event.DcotcTicker)-1)]
+      
+    }
+    
+    ### C       Retornos anormais acumulados - MMGarch
+    which(colnames(Feventc) == "MMGarch.cab.ret1") -> auxnum11
+    if(length(event.DcotcTicker) == maxeventdays) {
+      Feventc[i,auxnum11:(auxnum11+maxeventdays-1)] <- 
+        cumsum(as.numeric(Feventc[i,auxnum8:(auxnum8+maxeventdays-1)]))
+      
+      Feventc[i, "consolidated.MMGarch.cab.ret"] <- Feventc[i,(auxnum11+maxeventdays-1)]
+      
+    } else {
+      
+      Feventc[i,auxnum11:(auxnum11+length(event.DcotcTicker)-1)] <- cumsum(as.numeric(Feventc[i,auxnum8:(auxnum8+length(event.DcotcTicker)-1)]))
+      Feventc[i,(auxnum11 + length(event.DcotcTicker)):(auxnum11+maxeventdays-1)] <- rep(NA, maxeventdays - length(event.DcotcTicker))
+      
+      Feventc[i, "consolidated.MMGarch.cab.ret"] <- Feventc[i,(auxnum11+length(event.DcotcTicker)-1)]
+      
+    }
+    
+  } ## end for
+  
+  return(Feventc)
+  
+}
+getAR(cotfinal, eventfinal, idinde, est1, est2, ev1, ev2) -> ab13
+write.table(ab13, "ab13.txt", sep="\t")
